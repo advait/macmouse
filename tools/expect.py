@@ -1,7 +1,7 @@
 """Independent expectations for the macmouse plugin.
 
 Table outputs come from the installed macOS accelerator's recorded results
-(tests/apple-pointer-vectors.csv.gz), never from the plugin's C++ model. The
+(tests/vectors/speed-NN.csv.gz), never from the plugin's C++ model. The
 binary32 NX projection and WindowServer's truncating signed 24.8 cursor
 feedback are recomputed here with Python binary64 arithmetic.
 """
@@ -14,10 +14,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def apple_vectors():
-    """Integer-count fixture rows: {(dx, dy): (out_x, out_y)} as Apple produced them."""
+TICKS = range(1, 11)  # System Settings tracking-speed slider: 1 = Slow ... 10 = Fast
+
+
+def apple_vectors(tick=10):
+    """Integer-count fixture rows for one slider tick: {(dx, dy): (out_x, out_y)} as Apple produced them."""
     table = {}
-    with gzip.open(ROOT / 'tests/apple-pointer-vectors.csv.gz', 'rt') as f:
+    with gzip.open(ROOT / f'tests/vectors/speed-{tick:02d}.csv.gz', 'rt') as f:
         for row in csv.DictReader(f):
             try:
                 dx, dy = int(row['dx']), int(row['dy'])

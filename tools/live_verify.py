@@ -116,6 +116,7 @@ def main():
     parser.add_argument('--events', type=int, default=3000)
     parser.add_argument('--interval-ms', type=float, default=1.0)
     parser.add_argument('--seed', type=int, default=7)
+    parser.add_argument('--speed-events', type=int, default=300, help='events per other tracking-speed tick')
     parser.add_argument('--out', default=None, help='result JSON path')
     parser.add_argument('--physical', default=None, help='configured mouse that must be connected and selected (default: first in ~/.config/macmouse/devices)')
     args = parser.parse_args()
@@ -125,6 +126,9 @@ def main():
     original_status = json.loads(mm('status'))
     if not original_status['selftest']:
         raise SystemExit('plugin self-test failed')
+    vectors = mx.apple_vectors()
+    if original_status.get('speed') is None:
+        raise SystemExit('loaded macmouse predates tracking-speed support; reload it (tools/load.sh)')
     # The synthetic device is added to the selection below; independently require
     # that the real mouse is connected and selected by the deployed configuration.
     if args.physical is None:
@@ -143,7 +147,6 @@ def main():
     box = (mon['x'] + 60, mon['y'] + 60, mon['x'] + w - 60, mon['y'] + h - 60)
     start = (float(int(mon['x'] + w / 2)), float(int(mon['y'] + h / 2)))
 
-    vectors = mx.apple_vectors()
     inputs = mx.plan(vectors, args.events, start, box, seed=args.seed)
     inputs[5:5] = [(0, 0)] * 3  # all-zero frames: libinput emits nothing, Mac emits no motion
     work = Path(tempfile.mkdtemp(prefix='macmouse-live-'))
@@ -163,6 +166,7 @@ def main():
                 break
             time.sleep(0.05)
         time.sleep(1.5)
+        mm('speed', '10')  # the first phases use the Fast-end fixture
         mm('devices', ','.join(sorted(set(original_status['devices']) | {HL_NAME})))
         failures, phases = [], {}
         # Same Apple-fixture sequence with Hyprland choosing the accelerated and
@@ -185,6 +189,26 @@ def main():
             if foreign:
                 failures.append(f'{name}: {len(foreign)} events from other devices interleaved (user activity?) -> rerun')
             phases[name] = {'selected_events': len(rows), 'send_seconds': round(elapsed, 3)}
+
+        # The remaining tracking-speed ticks, each against Apple's outputs for that tick.
+        set_force(False)
+        for tick in mx.TICKS:
+            if tick == 10:
+                continue
+            if json.loads(mm('speed', str(tick)))['speed'] != tick:
+                raise RuntimeError(f'cannot select speed {tick}')
+            tick_vectors = mx.apple_vectors(tick)
+            tick_inputs = mx.plan(tick_vectors, args.speed_events, start, box, seed=args.seed + tick)
+            mm('trace', 'start', str(args.speed_events + 100))
+            mm('warp', str(start[0]), str(start[1]))
+            send(mouse, tick_inputs, args.interval_ms / 1000)
+            mm('trace', 'dump', str(work / f'speed-{tick}.csv'))
+            all_rows = mx.read_trace(work / f'speed-{tick}.csv')
+            rows = [r for r in all_rows if r['device'] == HL_NAME]
+            failures += [f'speed {tick}: {f}' for f in mx.verify(rows, tick_inputs, tick_vectors, start)]
+            if len(rows) != len(all_rows):
+                failures.append(f'speed {tick}: events from other devices interleaved (user activity?) -> rerun')
+            phases[f'speed_{tick}'] = {'selected_events': len(rows)}
         set_force(force_original)
 
         # Unselected device: stock libinput acceleration must be untouched.
@@ -215,6 +239,7 @@ def main():
         }
     finally:
         set_force(force_original)
+        mm('speed', str(original_status['speed']))
         mouse.close()
         mm('devices', ','.join(original_status['devices']))
         mm('trace', 'stop')

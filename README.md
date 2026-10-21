@@ -17,8 +17,9 @@ choose, with the exact arithmetic macOS 26.5 uses for pointer movement:
 - the binary32 rounding of the NX event layer
 - WindowServer's truncating 24.8 fixed-point cursor position
 
-The model matches **86,430 outputs recorded from Apple's own accelerator, bit for
-bit**. Inside a running Hyprland session, the cursor follows those values exactly
+It supports all ten positions of the macOS tracking-speed slider. The model matches
+**864,300 outputs recorded from Apple's own accelerator (86,430 per slider position),
+bit for bit**. Inside a running Hyprland session, the cursor follows those values exactly
 for every injected event. See [How macOS moves the mouse pointer](docs/ALGORITHM.md)
 and [Verification](docs/VERIFICATION.md).
 
@@ -38,15 +39,16 @@ Pointer movement only; wheel scrolling is unchanged.
 ```sh
 git clone https://github.com/advait/macmouse ~/.local/src/macmouse
 cd ~/.local/src/macmouse
-make check                       # portable model vs Apple's outputs (86430 rows, 0 mismatches)
+make check                       # portable model vs Apple's outputs (864300 rows, 0 mismatches)
 hyprctl devices                  # find your mouse's name under "mice"
-tools/install.sh razer-razer-basilisk-v2    # use your mouse's name; several allowed
+tools/install.sh --speed 10 razer-razer-basilisk-v2   # your Mac's slider tick; your mouse's name(s)
 make verify                      # optional: live end-to-end check (~10 s, moves the cursor)
 ```
 
 `tools/install.sh`:
 
-1. writes the device names to `~/.config/macmouse/devices`
+1. writes the device names to `~/.config/macmouse/devices` and the tracking speed
+   to `~/.config/macmouse/tracking-speed`
 2. adds one autostart line, tagged `macmouse autostart`, to
    `~/.config/hypr/autostart.lua` (or `hyprland.lua`/`hyprland.conf`), after saving a
    `.bak.macmouse` copy
@@ -61,9 +63,18 @@ and stock behavior. Log: `~/.local/state/macmouse/load.log`.
 
 - **Mouse CPI**: macOS does not normalize by mouse DPI. Use the same CPI on both
   machines; the shipped profile was captured at 1600 CPI, 1000 Hz.
-- **Tracking speed**: the shipped profile is macOS's fastest tracking-speed setting
-  (`defaults read -g com.apple.mouse.scaling` → `3`). Other speeds are not yet
-  supported.
+- **Tracking speed**: in System Settings › Mouse › Tracking speed, count the slider's
+  ticks from Slow (1) to Fast (10), and use the same tick here. The slider snaps to
+  these ten positions, and each writes one value to `com.apple.mouse.scaling`. On the
+  Mac, `defaults read -g com.apple.mouse.scaling` tells you which one you have:
+
+  | tick | 1 (Slow) | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 (Fast) |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | `com.apple.mouse.scaling` | 0 | 0.125 | 0.5 | 0.6875 | 0.875 | 1 | 1.5 | 2 | 2.5 | 3 |
+
+  Change it any time with `tools/speed.sh <tick>`, which saves it and applies it
+  immediately. Run `tools/speed.sh` with no argument to print this table and the
+  current setting. The default is 10.
 - **Display scale**: for identical physical travel, Hyprland's mm per logical pixel
   should match your Mac's mm per point. See the
   [physical scale table](docs/ALGORITHM.md#physical-scale). For example, a 27" 4K
@@ -74,6 +85,7 @@ and stock behavior. Log: `~/.local/state/macmouse/load.log`.
 ```sh
 hyprctl macmouse status          # enabled, self-test, devices, counters
 hyprctl macmouse disable         # stock libinput behavior until `enable`
+hyprctl macmouse speed 7         # tracking-speed tick for this session (tools/speed.sh persists it)
 hyprctl macmouse devices a,b     # change devices for this session
 ```
 
@@ -92,16 +104,17 @@ tools/uninstall.sh               # removes the autostart line, unloads, deletes 
 | --- | --- |
 | `src/pointer_profile.hpp` | portable model of macOS table acceleration |
 | `src/macmouse.cpp` | Hyprland plugin |
-| `profiles/table-segments.hex.csv` | the nine curve segments macOS built (exact binary64) |
-| `tests/apple-pointer-vectors.csv.gz` | 86,430 outputs recorded from Apple's accelerator |
+| `profiles/tracking-speeds.hex.csv` | the curve segments macOS builds for each slider tick (exact binary64) |
+| `tests/vectors/speed-NN.csv.gz` | 86,430 outputs recorded from Apple's accelerator per tick |
 | `tests/check_model.cpp` | bit-exact model check (`make check`) |
 | `tools/nested_check.py`, `tools/probe_plugin.cpp` | isolated nested-compositor gate |
 | `tools/live_verify.py` | live uinput end-to-end check (`make verify`) |
-| `tools/load.sh`, `tools/install.sh`, `tools/uninstall.sh` | deployment |
+| `tools/load.sh`, `tools/install.sh`, `tools/uninstall.sh`, `tools/speed.sh` | deployment |
 
 ## Limits
 
-- One macOS configuration: 26.5, default acceleration table, tracking speed 3.
+- macOS 26.5 with the default acceleration table, at the slider's ten positions.
+  Values set outside the slider with `defaults write` are not supported.
 - Assumes macOS delivers third-party mouse motion immediately rather than
   resampling it; this affects timing, not distance.
 - Different physical mice can differ in real CPI even at the same setting.

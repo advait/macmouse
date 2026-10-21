@@ -35,8 +35,8 @@ at 1000 Hz gets 1000 independent applications of the curve per second.
   one). A 1600 CPI mouse therefore moves the pointer four times as far per inch as a
   400 CPI mouse. **Set your mouse to the same CPI on both machines.**
 - The *tracking speed* slider (`defaults read -g com.apple.mouse.scaling`). It
-  selects which curve is interpolated out of Apple's default acceleration table. The
-  shipped profile was captured at **3**, the slider's fastest position.
+  selects which curve is interpolated out of Apple's default acceleration table. See
+  [Tracking speed](#tracking-speed) for its ten positions.
 - Report-rate scaling (`HIDPointerReportRate`/accelerator rate) is **0** for these
   mice, which disables every timestamp-dependent branch.
 
@@ -46,9 +46,10 @@ Apple stores pointer acceleration as a compact table of curves, one per
 tracking-speed value, published in Apple's open-source IOHIDFamily as
 `defaultAccelTable`. When the mouse service starts, macOS interpolates the curve for
 the current tracking speed and resolution and converts it into a list of linear
-segments `(m, b, x)`. This repository stores the nine segments macOS built for
-tracking speed 3 and resolution 400, read losslessly as binary64 from the running
-system (`profiles/table-segments.hex.csv`):
+segments `(m, b, x)`. This repository stores the segments macOS builds for each
+slider position at resolution 400, read losslessly as binary64 from the running
+system's own constructor (`profiles/tracking-speeds.hex.csv`). At the Fast end
+(tick 10, scaling 3) there are nine:
 
 | segment | applies while magnitude ≤ | m (slope) | b (intercept) |
 | --- | --- | --- | --- |
@@ -63,6 +64,38 @@ system (`profiles/table-segments.hex.csv`):
 > Don't rebuild these from `hidutil` output. Its serialization rounds the
 > coefficients to unsigned 16.16 fixed point, which erases the two negative
 > intercepts (−4.21 and −78.69) and visibly changes the curve.
+
+### Tracking speed
+
+System Settings' slider snaps to ten positions, and each writes one value to
+`com.apple.mouse.scaling`. The values come from the Mouse settings extension:
+
+| tick | 1 (Slow) | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 (Fast) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| scaling | 0 | 0.125 | 0.5 | 0.6875 | 0.875 | 1 | 1.5 | 2 | 2.5 | 3 |
+| segments | 1 | 10 | 10 | 10 | 10 | 9 | 9 | 9 | 9 | 9 |
+
+The scaling value goes to the mouse's event filter unchanged as
+`HIDMouseAcceleration` (16.16 fixed point), and the filter builds the table curve for
+it. Only the curve changes between ticks; the per-report arithmetic below, rate 0
+and resolution 400 stay the same. Output in points per report:
+
+| counts per report | 1 | 4 | 10 | 20 | 40 | 100 | 250 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| tick 1 | 0.240 | 0.960 | 2.400 | 4.800 | 9.600 | 24.0 | 60.0 |
+| tick 2 | 0.208 | 1.034 | 3.088 | 6.440 | 15.73 | 41.4 | 79.4 |
+| tick 3 | 0.222 | 1.429 | 5.153 | 11.36 | 34.11 | 93.8 | 137.5 |
+| tick 4 | 0.229 | 1.626 | 6.185 | 13.82 | 43.30 | 119.9 | 166.5 |
+| tick 5 | 0.235 | 1.824 | 7.217 | 16.28 | 52.50 | 146.1 | 195.6 |
+| tick 6 | 0.203 | 1.898 | 7.905 | 17.92 | 58.62 | 163.5 | 214.9 (cap) |
+| tick 7 | 0.254 | 2.373 | 9.882 | 22.40 | 73.28 | 204.4 | 268.7 (cap) |
+| tick 8 | 0.305 | 2.847 | 11.86 | 26.88 | 87.93 | 245.3 | 322.4 (cap) |
+| tick 9 | 0.356 | 3.322 | 13.84 | 31.36 | 102.6 | 286.2 | 376.1 (cap) |
+| tick 10 | 0.407 | 3.797 | 15.81 | 35.83 | 117.2 | 327.1 | 429.9 (cap) |
+
+Tick 1 has no acceleration at all: one linear segment, 0.24 points per count. Ticks 2–5
+accelerate, then keep growing slowly. Ticks 6–10 share one shape scaled up, and
+level off at a per-report cap.
 
 ### Per-report arithmetic
 
@@ -176,6 +209,8 @@ layout, sensor differences between physical mice, and display latency.
   rather than resampling it. Static analysis of WindowServer's drag-interpolation
   predicate supports this, but it was not observed live. If it were wrong, it would
   affect timing, not distance.
-- One configuration: macOS 26.5, default table, tracking speed 3, resolution 400.
-  Other tracking speeds need their own segments, which this repository does not yet
-  generate.
+- macOS 26.5, default table, resolution 400, at the slider's ten positions. Values
+  written outside the slider with `defaults write` would need their own segments.
+- At every tick the live mouse filter on the reference Mac built a table accelerator
+  with rate 0, resolution 400 and the same segments as the constructor this
+  repository reads, so the per-report path above applies at all ten.

@@ -8,6 +8,9 @@
 // installed ARM64e accelerator: see tests/apple-pointer-vectors.csv.gz.
 namespace mouse_parity {
 struct Segment { double m, b, x; };
+// One tick of the System Settings tracking-speed slider (1 = Slow ... 10 = Fast):
+// the com.apple.mouse.scaling value it writes and its segments in a table.
+struct TrackingSpeed { int tick; double scaling; int first, count; };
 class PointerProfile {
  std::vector<Segment> segments;
 public:

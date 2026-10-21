@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install macmouse for the current user: device config + autostart hook, then load now.
-# Usage: tools/install.sh [hyprland-device-name ...]   (see `hyprctl devices`)
+# Usage: tools/install.sh [--speed 1..10] [hyprland-device-name ...]   (see `hyprctl devices`)
+#   --speed: your Mac's tracking-speed slider tick, 1 = Slow ... 10 = Fast (default 10)
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 CONF_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/macmouse
@@ -8,6 +9,11 @@ HYPR=${XDG_CONFIG_HOME:-$HOME/.config}/hypr
 MARK="# macmouse autostart"
 
 mkdir -p "$CONF_DIR"
+if [ "${1:-}" = --speed ]; then
+    [[ "${2:-}" =~ ^([1-9]|10)$ ]] || { echo "--speed takes a slider tick from 1 (Slow) to 10 (Fast)" >&2; exit 2; }
+    echo "$2" >"$CONF_DIR/tracking-speed"
+    shift 2
+fi
 if [ $# -gt 0 ]; then
     printf '%s\n' "$@" >"$CONF_DIR/devices"
 elif [ ! -s "$CONF_DIR/devices" ]; then
@@ -17,6 +23,7 @@ elif [ ! -s "$CONF_DIR/devices" ]; then
     exit 2
 fi
 echo "devices: $(tr '\n' ' ' <"$CONF_DIR/devices")"
+echo "tracking speed: $(cat "$CONF_DIR/tracking-speed" 2>/dev/null || echo 10) of 10"
 
 if [ -f "$HYPR/autostart.lua" ] || [ -f "$HYPR/hyprland.lua" ]; then
     TARGET=$HYPR/autostart.lua

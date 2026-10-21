@@ -56,6 +56,7 @@ def main():
         assert loaded == 'ok', loaded
         status = json.loads(ctl(instance, 'macmouse', 'status'))
         assert status['selftest'] is True, status
+        assert status['speed'] == 10, status  # default: the slider's Fast end
         ctl(instance, 'macmouse', 'devices', PROBE_NAME)
 
         def replay(rows, name, start_point):
@@ -78,6 +79,28 @@ def main():
             failures += [f'force_no_accel={force}: {f}' for f in mx.verify(rows, inputs, vectors, start, zeros_delivered=True)]
         assert ctl(instance, 'keyword', 'input:force_no_accel', '0') == 'ok'
 
+        # Every other tracking-speed tick: Apple's recorded outputs for that tick.
+        speeds = {}
+        for tick in mx.TICKS:
+            if tick == 10:
+                continue
+            assert json.loads(ctl(instance, 'macmouse', 'speed', str(tick)))['speed'] == tick
+            tick_vectors = mx.apple_vectors(tick)
+            tick_inputs = mx.plan(tick_vectors, 600, start, (50, 50, 2510, 1390), seed=tick)
+            ctl(instance, 'macmouse', 'trace', 'start', '1000')
+            replay(tick_inputs, f'speed-{tick}', start)
+            ctl(instance, 'macmouse', 'trace', 'dump', str(work / f'speed-{tick}-trace.csv'))
+            trows = [r for r in mx.read_trace(work / f'speed-{tick}-trace.csv') if r['device'] == PROBE_NAME]
+            failures += [f'speed {tick}: {f}' for f in mx.verify(trows, tick_inputs, tick_vectors, start, zeros_delivered=True)]
+            speeds[tick] = len(trows)
+        for bad in ('0', '11', '2.5', '-1', 'fast'):
+            out = subprocess.run(['hyprctl', '-i', instance, 'macmouse', 'speed', bad], capture_output=True, text=True).stdout
+            if 'speed must be' not in out:  # hyprctl exits nonzero on an error reply
+                failures.append(f'speed {bad} accepted')
+        if json.loads(ctl(instance, 'macmouse', 'status'))['speed'] != 9:
+            failures.append('rejected speed changed the setting')
+        assert json.loads(ctl(instance, 'macmouse', 'speed', '10'))['speed'] == 10
+
         # Passthrough: device not selected -> stock delta, untouched.
         ctl(instance, 'macmouse', 'devices', 'some-other-mouse')
         ctl(instance, 'macmouse', 'trace', 'start', '1000')
@@ -95,7 +118,7 @@ def main():
         if len(orows) != len(other):
             failures.append(f'passthrough rows {len(orows)} != {len(other)}')
 
-        result = {'passed': not failures, 'selected_events': len(rows), 'passthrough_events': len(orows),
+        result = {'passed': not failures, 'selected_events': len(rows), 'speed_events': speeds, 'passthrough_events': len(orows),
                   'apple_fixture_inputs': len(inputs), 'distinct_inputs': len(set(inputs)),
                   'hyprland': ctl(instance, 'version').splitlines()[0], 'failures': failures[:20], 'workdir': str(work)}
     finally:

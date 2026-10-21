@@ -10,15 +10,16 @@ all: check plugin
 build:
 	mkdir -p build
 
-# Portable model vs Apple's recorded outputs; runs anywhere (no Hyprland needed).
+# Portable model vs Apple's recorded outputs at every tracking speed; runs anywhere (no Hyprland needed).
 build/check_model: tests/check_model.cpp src/pointer_profile.hpp build/macmouse_table.inc
 	$(CXX) -std=c++17 $(FPFLAGS) -Isrc -Ibuild $< -o $@
 check: build/check_model
-	build/check_model tests/apple-pointer-vectors.csv.gz
+	build/check_model tests/vectors/speed-*.csv.gz
 
-build/macmouse_table.inc: profiles/table-segments.hex.csv | build
-	awk -F, 'NR==1{if($$0!="m,b,x")exit 1;print "constexpr mouse_parity::Segment kTable[] = {";next}{print "    {"$$1", "$$2", "$$3"},"}END{print "};"}' $< > $@
-	test $$(grep -c '^    {' $@) -eq 9
+build/macmouse_table.inc: profiles/tracking-speeds.hex.csv | build
+	awk -F, 'NR==1{if($$0!="tick,scaling,m,b,x")exit 1;print "constexpr mouse_parity::Segment kSegments[] = {";next}\
+	  {print "    {"$$3", "$$4", "$$5"},";if($$1!=t){t=$$1;n++;tk[n]=$$1;sc[n]=$$2;f[n]=NR-2}c[n]++}\
+	  END{print "};\nconstexpr mouse_parity::TrackingSpeed kSpeeds[] = {";for(i=1;i<=n;i++)print "    {"tk[i]", "sc[i]", "f[i]", "c[i]"},";print "};"}' $< > $@
 
 build/macmouse.so: src/macmouse.cpp src/pointer_profile.hpp build/macmouse_table.inc
 	$(CXX) -std=c++23 $(FPFLAGS) -fPIC -shared -Isrc -Ibuild $< -o $@ $(HYPRFLAGS)

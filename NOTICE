@@ -1,17 +1,16 @@
 macmouse
 ========
 
-profiles/table-segments.hex.csv contains the linear segments macOS constructs
+profiles/tracking-speeds.hex.csv contains the linear segments macOS constructs
 from Apple's default pointer acceleration table ("defaultAccelTable"), published
 in Apple's open-source IOHIDFamily project
 (https://github.com/apple-oss-distributions/IOHIDFamily) under the Apple Public
 Source License, Version 2.0 (https://opensource.apple.com/apsl/). The segment
-values were read from the running macOS 26.5 system for tracking speed 3 and
-resolution 400.
+values were read from the running macOS 26.5 system for each of the ten
+tracking-speed slider positions at resolution 400.
 
-tests/apple-pointer-vectors.csv.gz contains numeric outputs recorded by calling
-the macOS 26.5 pointer accelerator with synthetic inputs, used only as test
-vectors.
+tests/vectors/ contains numeric outputs recorded by calling the macOS 26.5
+pointer accelerator with synthetic inputs, used only as test vectors.
 
 No Apple source code, binaries or disassembly are included in this repository.
 Apple, macOS and Mac are trademarks of Apple Inc. This project is not affiliated

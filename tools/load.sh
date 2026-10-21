@@ -10,6 +10,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/macmouse
 LIB=${XDG_DATA_HOME:-$HOME/.local/share}/macmouse
 CONF=${XDG_CONFIG_HOME:-$HOME/.config}/macmouse/devices
+SPEED_CONF=${XDG_CONFIG_HOME:-$HOME/.config}/macmouse/tracking-speed
 mkdir -p "$STATE" "$LIB"
 exec >>"$STATE/load.log" 2>&1
 echo "== $(date -Is) load"
@@ -25,12 +26,16 @@ ABI=$(hyprctl version -j | python3 -c 'import json,sys; print(json.load(sys.stdi
 
 DEVICES=$(grep -v '^\s*#' "$CONF" 2>/dev/null | tr -s ' \n' ',' | sed 's/^,//; s/,$//')
 [ -n "$DEVICES" ] || fail "no devices in $CONF (see README)"
+# macOS tracking-speed slider tick, 1 (Slow) .. 10 (Fast); default 10.
+SPEED=$(grep -v '^\s*#' "$SPEED_CONF" 2>/dev/null | tr -d ' \n')
+SPEED=${SPEED:-10}
+[[ "$SPEED" =~ ^([1-9]|10)$ ]] || fail "tracking speed in $SPEED_CONF must be 1..10, got '$SPEED'"
 
 if ! hyprctl plugin list | grep -q '^Plugin macmouse '; then
     # Validation key: everything that defines the build and its acceptance check.
-    KEY=$(cd "$REPO" && cat Makefile src/macmouse.cpp src/pointer_profile.hpp profiles/table-segments.hex.csv \
+    KEY=$(cd "$REPO" && cat Makefile src/macmouse.cpp src/pointer_profile.hpp profiles/tracking-speeds.hex.csv \
           tools/probe_plugin.cpp tools/expect.py tools/nested_check.py \
-          tests/isolated-hyprland.conf tests/apple-pointer-vectors.csv.gz | sha256sum | cut -c1-16)
+          tests/isolated-hyprland.conf tests/check_model.cpp tests/vectors/speed-*.csv.gz | sha256sum | cut -c1-16)
     GOOD="$LIB/macmouse-${ABI:0:12}-$KEY.so"
     if [ ! -f "$GOOD" ]; then
         echo "no validated build for $ABI / $KEY: rebuilding"
@@ -52,6 +57,7 @@ if ! hyprctl plugin list | grep -q '^Plugin macmouse '; then
 fi
 
 hyprctl macmouse devices "$DEVICES" >/dev/null
+hyprctl macmouse speed "$SPEED" | grep -q "\"speed\":$SPEED," || fail "cannot set tracking speed $SPEED"
 status=$(hyprctl macmouse status)
 echo "$status"
 case "$status" in *'"selftest":true'*) ;; *) fail "self-test failed" ;; esac

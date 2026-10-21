@@ -1,0 +1,218 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>macmouse before / after</title>
+<style>
+  html, body { margin: 0; background: #0e1828; overflow: hidden; }
+  #stage { width: 1920px; height: 1080px; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script src="demo-data.js"></script>
+<script>
+// Deterministic renderer: window.renderAt(seconds) draws the frame for time t.
+// Cursor paths are real recordings from Hyprland (see record.py); the macOS
+// path is computed from Apple's recorded accelerator outputs.
+const D = window.DEMO;
+const W = 1920, H = 1080, FPS = 60;
+const C = { bg: '#0e1828', text: '#edf3fa', muted: '#acbed2', mint: '#99debf', amber: '#f0c780', cyan: '#79d5ce', lilac: '#c4b5ec' };
+const SANS = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+const MONO = 'Menlo, "SF Mono", monospace';
+
+// Monitor in logical pixels (DP-1 at scale 1.5) mapped into each panel.
+const MON = { w: 2560, h: 1440 };
+const PW = 860, PH = PW * 9 / 16, PY = 238;
+const PANELS = [
+  { x: 80, label: 'Stock Omarchy', sub: 'libinput adaptive acceleration (default)', path: D.stock, color: C.amber },
+  { x: 980, label: 'Omarchy + macmouse', sub: 'macOS pointer acceleration', path: D.macmouse, color: C.mint },
+];
+
+// Video timeline: intro, then each gesture with a caption lead-in, playback at
+// the given speed, and a hold. Motion time is in milliseconds of real input.
+const GESTURE_TEXT = {
+  slow:   { lead: 'A slow, precise move', speed: 1.0 },
+  flick:  { lead: 'A fast flick', speed: 0.4 },
+  arc:    { lead: 'A medium sweep', speed: 0.5 },
+  return: { lead: 'A slow move back', speed: 1.0 },
+};
+const INTRO = 3.2, LEAD = 1.1, HOLD = 1.0, OUTRO = 4.2;
+const segs = []; let t0 = INTRO;
+for (const [name, a, b] of D.spans) {
+  const g = GESTURE_TEXT[name], play = (b - a) / 1000 / g.speed;
+  segs.push({ name, a, b, speed: g.speed, lead: g.lead, tLead: t0, tPlay: t0 + LEAD, tHold: t0 + LEAD + play, tEnd: t0 + LEAD + play + HOLD });
+  t0 += LEAD + play + HOLD;
+}
+const T_OUTRO = t0;
+window.duration = T_OUTRO + OUTRO;
+
+function motionMs(t) { // video seconds -> index into the 1 kHz report stream
+  let ms = 0;
+  for (const s of segs) {
+    if (t < s.tPlay) return ms;
+    if (t < s.tHold) return Math.floor(s.a + (t - s.tPlay) * 1000 * s.speed);
+    ms = s.b; // pauses between gestures are part of the input: cursor holds
+  }
+  return D.reports.length;
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const smooth = x => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+const fade = (t, a, b, inDur = 0.45, outDur = 0.45) => smooth((t - a) / inDur) * (1 - smooth((t - (b - outDur)) / outDur));
+
+const ctx = document.getElementById('stage').getContext('2d');
+const wall = new Image();
+window.ready = new Promise(r => { wall.onload = () => wall.decode().then(r); wall.src = 'omarchy-tokyo-night-winding-road.jpg'; });
+
+// Background: wallpaper, blurred and darkened, rendered once.
+let backdrop = null;
+function makeBackdrop() {
+  backdrop = document.createElement('canvas'); backdrop.width = W; backdrop.height = H;
+  const b = backdrop.getContext('2d');
+  b.filter = 'blur(28px) brightness(0.42) saturate(1.1)';
+  b.drawImage(wall, -60, -40, W + 120, H + 80);
+  b.filter = 'none';
+  const g = b.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, 'rgba(14,24,40,0.55)'); g.addColorStop(0.5, 'rgba(14,24,40,0.15)'); g.addColorStop(1, 'rgba(14,24,40,0.7)');
+  b.fillStyle = g; b.fillRect(0, 0, W, H);
+}
+
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function text(s, x, y, { size = 40, color = C.text, weight = 600, align = 'center', font = SANS, alpha = 1 } = {}) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.font = `${weight} ${size}px ${font}`; ctx.textAlign = align; ctx.textBaseline = 'alphabetic';
+  ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 14; ctx.fillStyle = color; ctx.fillText(s, x, y); ctx.restore();
+}
+function cursor(x, y, { fill = '#fff', stroke = '#111', alpha = 1, ghost = false } = {}) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.scale(1.05, 1.05);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 22); ctx.lineTo(5.5, 17); ctx.lineTo(9.5, 26); ctx.lineTo(13, 24.5); ctx.lineTo(9, 15.8); ctx.lineTo(16, 15.8); ctx.closePath();
+  if (ghost) { ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.fill(); ctx.setLineDash([3, 2]); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke(); }
+  else { ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 6; ctx.fillStyle = fill; ctx.fill(); ctx.shadowBlur = 0; ctx.lineWidth = 1.5; ctx.strokeStyle = stroke; ctx.stroke(); }
+  ctx.restore();
+}
+const toPanel = (p, px) => [px + p[0] / MON.w * PW, PY + p[1] / MON.h * PH];
+
+function trail(path, n, px, color, { width = 3.2, dash = null, alpha = 1 } = {}) {
+  if (n < 1) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (dash) ctx.setLineDash(dash);
+  ctx.beginPath(); let [x, y] = toPanel(path[0], px); ctx.moveTo(x, y);
+  for (let i = 1; i < n; i += 2) { [x, y] = toPanel(path[i], px); ctx.lineTo(x, y); }
+  [x, y] = toPanel(path[n - 1], px); ctx.lineTo(x, y); ctx.stroke(); ctx.restore();
+}
+
+function panel(P, n, t) {
+  const x = P.x;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 40; ctx.shadowOffsetY = 12;
+  roundRect(x, PY, PW, PH, 14); ctx.fillStyle = '#000'; ctx.fill(); ctx.restore();
+  ctx.save(); roundRect(x, PY, PW, PH, 14); ctx.clip();
+  ctx.drawImage(wall, x, PY, PW, PH);
+  ctx.fillStyle = 'rgba(8,12,22,0.18)'; ctx.fillRect(x, PY, PW, PH);
+  // macOS reference path (identical input, computed from Apple's outputs).
+  trail(D.mac, n, x, '#ffffff', { width: 2.4, dash: [7, 7], alpha: 0.85 });
+  trail(P.path, n, x, P.color, { width: 4 });
+  const i = Math.max(0, n - 1);
+  const [gx, gy] = toPanel(n ? D.mac[i] : D.start, x);
+  const [cx, cy] = toPanel(n ? P.path[i] : D.start, x);
+  cursor(gx, gy, { ghost: true });
+  if (Math.hypot(gx - cx, gy - cy) > 30) { // label the reference where it is separate
+    ctx.save(); ctx.font = `700 18px ${SANS}`; const tw = ctx.measureText('macOS').width;
+    roundRect(gx + 18, gy + 24, tw + 16, 26, 13); ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fill();
+    ctx.fillStyle = '#0e1828'; ctx.textAlign = 'left'; ctx.fillText('macOS', gx + 26, gy + 43); ctx.restore();
+  }
+  cursor(cx, cy, { fill: '#ffffff', stroke: '#111' });
+  ctx.restore();
+  ctx.save(); roundRect(x + 0.5, PY + 0.5, PW - 1, PH - 1, 14); ctx.lineWidth = 2; ctx.strokeStyle = P.color; ctx.globalAlpha = 0.9; ctx.stroke(); ctx.restore();
+  text(P.label, x + 22, PY + PH + 52, { size: 38, align: 'left', color: P.color, weight: 700 });
+  text(P.sub, x + 22, PY + PH + 90, { size: 26, align: 'left', color: C.muted, weight: 500 });
+  // Distance from where macOS would put the cursor.
+  const d = n ? Math.hypot(P.path[i][0] - D.mac[i][0], P.path[i][1] - D.mac[i][1]) : 0;
+  const show = smooth((t - INTRO - 0.4) / 0.5);
+  if (show > 0) {
+    const exact = d === 0;
+    const s = `${Math.round(d)} px off macOS`;
+    text(s, x + PW - 22, PY + PH + 52, { size: 32, align: 'right', color: exact ? C.mint : C.amber, font: MONO, weight: 600, alpha: show });
+  }
+}
+
+function legend(alpha) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha;
+  const y = 1000, x0 = 1840 - 72 - 560;
+  ctx.setLineDash([7, 7]); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(x0, y - 9); ctx.lineTo(x0 + 56, y - 9); ctx.stroke(); ctx.setLineDash([]);
+  ctx.restore();
+  text('macOS reference path, same input', x0 + 72, y, { size: 26, align: 'left', color: C.muted, weight: 500, alpha });
+}
+
+// Bottom-left: the physical hand motion, identical for both panels.
+function hand(n, alpha) {
+  if (alpha <= 0) return;
+  const x = 80, y = 952, w = 560, h = 92;
+  ctx.save(); ctx.globalAlpha = alpha * 0.85; roundRect(x, y - 24, w, h, 12); ctx.fillStyle = 'rgba(14,24,40,0.55)'; ctx.fill(); ctx.restore();
+  text('Mouse input · 1600 CPI · 1000 Hz', x + 18, y + 8, { size: 22, align: 'left', color: C.muted, weight: 600, alpha });
+  // Instantaneous hand speed bar (counts per report → inches/second).
+  const r = D.reports[Math.max(0, n - 1)] || [0, 0];
+  const ips = Math.hypot(r[0], r[1]) * 1000 / 1600;
+  const frac = clamp(ips / 12, 0, 1);
+  ctx.save(); ctx.globalAlpha = alpha; roundRect(x + 18, y + 26, w - 190, 14, 7); ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fill();
+  if (frac > 0) { roundRect(x + 18, y + 26, Math.max(14, (w - 190) * frac), 14, 7); ctx.fillStyle = C.cyan; ctx.fill(); }
+  ctx.restore();
+  text(`${ips.toFixed(1)} in/s`, x + w - 18, y + 42, { size: 24, align: 'right', color: C.text, font: MONO, weight: 600, alpha });
+}
+
+function headline(t) {
+  // Intro title.
+  const a0 = fade(t, 0, INTRO + 0.2, 0.5, 0.5);
+  text('Your Mac’s mouse feel, on Linux.', W / 2, 116, { size: 68, weight: 800, alpha: a0 });
+  text('macmouse reproduces macOS pointer acceleration in Hyprland, bit for bit.', W / 2, 172, { size: 32, color: C.muted, weight: 500, alpha: a0 });
+  // Gesture captions.
+  for (const s of segs) {
+    const a = fade(t, s.tLead, s.tEnd + 0.15, 0.35, 0.35);
+    const tag = s.speed !== 1 ? `  ·  shown at ${s.speed}× speed` : '';
+    text(s.lead + tag, W / 2, 128, { size: 54, weight: 700, alpha: a });
+    if (s.name === 'slow') {
+      const st = D.stock, m = D.mac, i = s.b - 1, j = Math.max(0, s.a - 1);
+      const ls = Math.hypot(st[i][0] - st[j][0], st[i][1] - st[j][1]), lm = Math.hypot(m[i][0] - m[j][0], m[i][1] - m[j][1]);
+      text(`Stock Linux moves ${(ls / lm).toFixed(1)}× farther than macOS. macOS damps slow, precise motion.`, W / 2, 182,
+           { size: 30, color: C.amber, weight: 600, alpha: a * smooth((t - s.tHold + 0.1) / 0.4) });
+    }
+    if (s.name === 'return') {
+      text('Same hand, same mouse: only macmouse lands where your Mac would.', W / 2, 182,
+           { size: 30, color: C.mint, weight: 600, alpha: a * smooth((t - s.tHold + 0.1) / 0.4) });
+    }
+  }
+}
+
+function outro(t) {
+  const a = smooth((t - T_OUTRO) / 0.6);
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a; ctx.drawImage(backdrop, 0, 0); ctx.globalAlpha = a * 0.35; ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H); ctx.restore();
+  text('macmouse', W / 2, 430, { size: 128, weight: 800, alpha: a });
+  text('macOS pointer physics for Hyprland & Omarchy', W / 2, 512, { size: 42, color: C.muted, weight: 500, alpha: a });
+  const b = smooth((t - T_OUTRO - 0.5) / 0.6);
+  text('Bit-exact against 86,430 outputs from Apple’s accelerator', W / 2, 628, { size: 34, color: C.mint, weight: 600, alpha: b });
+  text('Verified live in Hyprland, events through libinput', W / 2, 678, { size: 34, color: C.mint, weight: 600, alpha: b });
+  const c = smooth((t - T_OUTRO - 1.0) / 0.6);
+  text('github.com/advait/macmouse', W / 2, 800, { size: 46, color: C.cyan, font: MONO, weight: 700, alpha: c });
+}
+
+window.renderAt = function (t) {
+  if (!backdrop) makeBackdrop();
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(backdrop, 0, 0);
+  const n = motionMs(t);
+  for (const P of PANELS) panel(P, n, t);
+  headline(t);
+  const live = smooth((t - INTRO + 0.6) / 0.5);
+  hand(n, live);
+  legend(live);
+  outro(t);
+};
+
+window.ready.then(() => window.renderAt(0));
+// Live preview when opened directly in a browser.
+if (!navigator.webdriver) window.ready.then(() => { const s = performance.now(); (function f() { window.renderAt(((performance.now() - s) / 1000) % window.duration); requestAnimationFrame(f); })(); });
+</script>
+</body>
+</html>

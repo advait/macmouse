@@ -2,6 +2,12 @@
 
 **macOS mouse pointer physics for Hyprland (Omarchy and other Linux desktops).**
 
+<p align="center">
+  <a href="media/macmouse.mp4"><img src="media/macmouse.gif" alt="Side by side: the same mouse input on stock Omarchy drifts up to 1,589 px from where macOS would put the cursor; with macmouse it stays exactly on the macOS path." width="100%"></a>
+</p>
+
+<p align="center"><sub>Same hand motion, same 1600 CPI mouse. Cursor paths are real recordings from Hyprland; the dashed path is macOS, computed from Apple's own accelerator outputs. <a href="media/macmouse.mp4">MP4 with music</a> · <a href="media/src">how it was made</a></sub></p>
+
 If you switch between a Mac and a Linux desktop, the mouse feels different:
 libinput's adaptive acceleration has a different curve, different units and
 velocity smoothing. macmouse is a Hyprland plugin that replaces it, for the mice you
